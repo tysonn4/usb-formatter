@@ -1,7 +1,5 @@
 package com.noam.usbformatter
 
-import android.app.Activity
-import android.app.AlertDialog
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -11,28 +9,36 @@ import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Bundle
-import android.view.View
+import android.text.InputType
+import android.view.ViewGroup.LayoutParams.MATCH_PARENT
+import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.ArrayAdapter
-import android.widget.Button
-import android.widget.EditText
 import android.widget.LinearLayout
-import android.widget.ProgressBar
 import android.widget.ScrollView
-import android.widget.Spinner
 import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import com.google.android.material.R as M
+import com.google.android.material.button.MaterialButton
+import com.google.android.material.card.MaterialCardView
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.progressindicator.LinearProgressIndicator
+import com.google.android.material.textfield.MaterialAutoCompleteTextView
+import com.google.android.material.textfield.TextInputEditText
+import com.google.android.material.textfield.TextInputLayout
 
-class MainActivity : Activity() {
+class MainActivity : AppCompatActivity() {
     private val ACTION = "com.noam.usbformatter.PERMISSION"
     private lateinit var usb: UsbManager
-    private lateinit var spDev: Spinner
-    private lateinit var spFs: Spinner
-    private lateinit var etLabel: EditText
-    private lateinit var btnFormat: Button
-    private lateinit var bar: ProgressBar
+    private lateinit var devField: MaterialAutoCompleteTextView
+    private lateinit var etLabel: TextInputEditText
+    private lateinit var btnFormat: MaterialButton
+    private lateinit var bar: LinearProgressIndicator
     private lateinit var tvStatus: TextView
     private lateinit var tvLog: TextView
     private var devices = listOf<UsbDevice>()
+    private var selDev = 0
+    private var selFs = "FAT32"
     private var busy = false
 
     private val receiver = object : BroadcastReceiver() {
@@ -46,29 +52,77 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+    private fun lp(top: Int = 16) = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(top) }
+
+    private fun dropdown(hint: String): Pair<TextInputLayout, MaterialAutoCompleteTextView> {
+        val til = TextInputLayout(this, null, M.attr.textInputOutlinedExposedDropdownMenuStyle)
+        til.hint = hint
+        val ac = MaterialAutoCompleteTextView(til.context)
+        ac.inputType = InputType.TYPE_NULL
+        til.addView(ac, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        return til to ac
+    }
+
     override fun onCreate(s: Bundle?) {
         super.onCreate(s)
         usb = getSystemService(Context.USB_SERVICE) as UsbManager
-        val pad = (16 * resources.displayMetrics.density).toInt()
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, pad) }
-
-        root.addView(TextView(this).apply { text = "Formateur USB"; textSize = 24f })
-        root.addView(Button(this).apply { text = "Détecter les clés USB"; setOnClickListener { scan() } })
-        spDev = Spinner(this); root.addView(spDev)
-        spFs = Spinner(this).apply {
-            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, listOf("FAT32", "exFAT"))
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(32), dp(20), dp(24))
         }
-        root.addView(spFs)
-        etLabel = EditText(this).apply { hint = "Nom du volume (optionnel)"; setSingleLine() }
-        root.addView(etLabel)
-        btnFormat = Button(this).apply { text = "Formater"; setOnClickListener { confirm() } }
-        root.addView(btnFormat)
-        bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
-        root.addView(bar)
-        tvStatus = TextView(this); root.addView(tvStatus)
-        tvLog = TextView(this); root.addView(tvLog)
-        setContentView(ScrollView(this).apply { addView(root) })
 
+        root.addView(TextView(this).apply {
+            text = "Formateur USB"
+            setTextAppearance(M.style.TextAppearance_Material3_HeadlineLarge)
+        })
+        root.addView(TextView(this).apply {
+            text = "Formate une clé USB en FAT32 ou exFAT, sans root."
+            setTextAppearance(M.style.TextAppearance_Material3_BodyMedium)
+        }, lp(4))
+
+        root.addView(MaterialButton(this, null, M.attr.materialButtonOutlinedStyle).apply {
+            text = "Détecter les clés USB"
+            setOnClickListener { scan() }
+        }, lp(24))
+
+        val (devLayout, dev) = dropdown("Clé USB")
+        devField = dev
+        dev.setOnItemClickListener { _, _, pos, _ -> selDev = pos }
+        root.addView(devLayout, lp(16))
+
+        val (fsLayout, fsField) = dropdown("Format")
+        val fsList = listOf("FAT32", "exFAT")
+        fsField.setAdapter(ArrayAdapter(this, android.R.layout.simple_list_item_1, fsList))
+        fsField.setText(fsList[0], false)
+        fsField.setOnItemClickListener { _, _, pos, _ -> selFs = fsList[pos] }
+        root.addView(fsLayout, lp(12))
+
+        val labelLayout = TextInputLayout(this).apply { hint = "Nom du volume (optionnel)" }
+        etLabel = TextInputEditText(labelLayout.context).apply { setSingleLine() }
+        labelLayout.addView(etLabel)
+        root.addView(labelLayout, lp(12))
+
+        btnFormat = MaterialButton(this).apply {
+            text = "Formater"
+            setOnClickListener { confirm() }
+        }
+        root.addView(btnFormat, lp(24))
+
+        bar = LinearProgressIndicator(this).apply { max = 100 }
+        root.addView(bar, lp(24))
+        tvStatus = TextView(this).apply { setTextAppearance(M.style.TextAppearance_Material3_LabelLarge) }
+        root.addView(tvStatus, lp(8))
+
+        val card = MaterialCardView(this, null, M.attr.materialCardViewFilledStyle)
+        tvLog = TextView(this).apply {
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+            setTextAppearance(M.style.TextAppearance_Material3_BodyMedium)
+        }
+        card.addView(tvLog)
+        root.addView(card, lp(16))
+
+        setContentView(ScrollView(this).apply { addView(root) })
         ContextCompat.registerReceiver(this, receiver, IntentFilter(ACTION), ContextCompat.RECEIVER_NOT_EXPORTED)
         scan()
     }
@@ -83,18 +137,19 @@ class MainActivity : Activity() {
     private fun scan() {
         devices = usb.deviceList.values.filter { UsbMassStorage.find(it) != null }
         val names = devices.map { "${it.productName ?: "Clé USB"} (${String.format("%04x:%04x", it.vendorId, it.productId)})" }
-        spDev.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, names)
+        devField.setAdapter(ArrayAdapter(this, android.R.layout.simple_list_item_1, names))
+        selDev = 0
+        devField.setText(names.firstOrNull() ?: "", false)
         log(if (devices.isEmpty()) "Aucune clé détectée. Branche-la avec un adaptateur OTG." else "${devices.size} clé(s) détectée(s).")
     }
 
     private fun confirm() {
         if (busy) return
-        val d = devices.getOrNull(spDev.selectedItemPosition)
+        val d = devices.getOrNull(selDev)
         if (d == null) { log("Sélectionne d'abord une clé."); return }
-        val fs = spFs.selectedItem as String
-        AlertDialog.Builder(this)
+        MaterialAlertDialogBuilder(this)
             .setTitle("Tout sera effacé")
-            .setMessage("Formater cette clé en $fs ? TOUTES les données seront perdues.")
+            .setMessage("Formater cette clé en $selFs ? TOUTES les données seront perdues.")
             .setPositiveButton("Formater") { _, _ ->
                 if (usb.hasPermission(d)) startFormat(d) else requestPerm(d)
             }
@@ -111,7 +166,7 @@ class MainActivity : Activity() {
     private fun startFormat(d: UsbDevice) {
         if (busy) return
         busy = true
-        val fs = spFs.selectedItem as String
+        val fs = selFs
         val label = etLabel.text.toString()
         btnFormat.isEnabled = false
         Thread {
@@ -119,7 +174,7 @@ class MainActivity : Activity() {
             try {
                 dev = UsbMassStorage.open(usb, d)
                 log("Capacité : ${dev.blockCount * dev.blockSize / 1000000} Mo (secteurs de ${dev.blockSize} octets)")
-                val p: Progress = { pct, msg -> runOnUiThread { bar.progress = pct; tvStatus.text = msg } }
+                val p: Progress = { pct, msg -> runOnUiThread { bar.setProgressCompat(pct, true); tvStatus.text = msg } }
                 if (fs == "FAT32") Formatters.formatFat32(dev, label, p) else Formatters.formatExFat(dev, label, p)
                 log("Formatage $fs terminé. Débranche puis rebranche la clé.")
             } catch (e: Throwable) {
