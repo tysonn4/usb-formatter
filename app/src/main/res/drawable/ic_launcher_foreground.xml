@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- connecteur USB -->
+    <path android:fillColor="#CFD8DC" android:pathData="M44,22 h20 v20 h-20 z" />
+    <path android:fillColor="#1565C0" android:pathData="M48,26 h4 v8 h-4 z" />
+    <path android:fillColor="#1565C0" android:pathData="M56,26 h4 v8 h-4 z" />
+    <!-- corps de la clé -->
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M42,42 h24 a4,4 0 0 1 4,4 v34 a4,4 0 0 1 -4,4 h-24 a4,4 0 0 1 -4,-4 v-34 a4,4 0 0 1 4,-4 z" />
+    <!-- étiquette -->
+    <path android:fillColor="#1565C0" android:pathData="M46,54 h16 v4 h-16 z" />
+    <path android:fillColor="#1565C0" android:pathData="M46,64 h10 v4 h-10 z" />
+    <path android:fillColor="#FF7043" android:pathData="M58,66 m-3,0 a3,3 0 1 0 6,0 a3,3 0 1 0 -6,0" />
+</vector>
