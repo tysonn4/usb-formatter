@@ -39,6 +39,7 @@ class MainActivity : AppCompatActivity() {
     private var devices = listOf<UsbDevice>()
     private var selDev = 0
     private var selFs = "FAT32"
+    private var selTable = "MBR"
     private var busy = false
 
     private val receiver = object : BroadcastReceiver() {
@@ -77,7 +78,7 @@ class MainActivity : AppCompatActivity() {
             setTextAppearance(M.style.TextAppearance_Material3_HeadlineLarge)
         })
         root.addView(TextView(this).apply {
-            text = "Formate une clé USB en FAT32 ou exFAT, sans root."
+            text = "Formate une clé USB en FAT32 ou exFAT (MBR ou GPT), sans root."
             setTextAppearance(M.style.TextAppearance_Material3_BodyMedium)
         }, lp(4))
 
@@ -97,6 +98,17 @@ class MainActivity : AppCompatActivity() {
         fsField.setText(fsList[0], false)
         fsField.setOnItemClickListener { _, _, pos, _ -> selFs = fsList[pos] }
         root.addView(fsLayout, lp(12))
+
+        val (tableLayout, tableField) = dropdown("Table de partition")
+        val tableList = listOf("MBR", "GPT")
+        tableField.setAdapter(ArrayAdapter(this, android.R.layout.simple_list_item_1, tableList))
+        tableField.setText(tableList[0], false)
+        tableField.setOnItemClickListener { _, _, pos, _ -> selTable = tableList[pos] }
+        root.addView(tableLayout, lp(12))
+        root.addView(TextView(this).apply {
+            text = "MBR : compatible partout, jusqu'à 2 To. GPT : disques de plus de 2 To, systèmes récents."
+            setTextAppearance(M.style.TextAppearance_Material3_BodySmall)
+        }, lp(4))
 
         val labelLayout = TextInputLayout(this).apply { hint = "Nom du volume (optionnel)" }
         etLabel = TextInputEditText(labelLayout.context).apply { setSingleLine() }
@@ -149,7 +161,7 @@ class MainActivity : AppCompatActivity() {
         if (d == null) { log("Sélectionne d'abord une clé."); return }
         MaterialAlertDialogBuilder(this)
             .setTitle("Tout sera effacé")
-            .setMessage("Formater cette clé en $selFs ? TOUTES les données seront perdues.")
+            .setMessage("Formater cette clé en $selFs ($selTable) ? TOUTES les données seront perdues.")
             .setPositiveButton("Formater") { _, _ ->
                 if (usb.hasPermission(d)) startFormat(d) else requestPerm(d)
             }
@@ -167,6 +179,7 @@ class MainActivity : AppCompatActivity() {
         if (busy) return
         busy = true
         val fs = selFs
+        val gpt = selTable == "GPT"
         val label = etLabel.text.toString()
         btnFormat.isEnabled = false
         Thread {
@@ -175,8 +188,8 @@ class MainActivity : AppCompatActivity() {
                 dev = UsbMassStorage.open(usb, d)
                 log("Capacité : ${dev.blockCount * dev.blockSize / 1000000} Mo (secteurs de ${dev.blockSize} octets)")
                 val p: Progress = { pct, msg -> runOnUiThread { bar.setProgressCompat(pct, true); tvStatus.text = msg } }
-                if (fs == "FAT32") Formatters.formatFat32(dev, label, p) else Formatters.formatExFat(dev, label, p)
-                log("Formatage $fs terminé. Débranche puis rebranche la clé.")
+                if (fs == "FAT32") Formatters.formatFat32(dev, label, gpt, p) else Formatters.formatExFat(dev, label, gpt, p)
+                log("Formatage $fs (${if (gpt) "GPT" else "MBR"}) terminé. Débranche puis rebranche la clé.")
             } catch (e: Throwable) {
                 log("Erreur : ${e.message}")
             } finally {
