@@ -78,7 +78,7 @@ class MainActivity : AppCompatActivity() {
             setTextAppearance(M.style.TextAppearance_Material3_HeadlineLarge)
         })
         root.addView(TextView(this).apply {
-            text = "Formate une clé USB en FAT32 ou exFAT (MBR ou GPT), sans root."
+            text = "Formate une clé USB en FAT32, FAT16 ou exFAT (MBR ou GPT), sans root."
             setTextAppearance(M.style.TextAppearance_Material3_BodyMedium)
         }, lp(4))
 
@@ -93,7 +93,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(devLayout, lp(16))
 
         val (fsLayout, fsField) = dropdown("Format")
-        val fsList = listOf("FAT32", "exFAT")
+        val fsList = listOf("FAT32", "FAT16", "exFAT")
         fsField.setAdapter(ArrayAdapter(this, android.R.layout.simple_list_item_1, fsList))
         fsField.setText(fsList[0], false)
         fsField.setOnItemClickListener { _, _, pos, _ -> selFs = fsList[pos] }
@@ -161,7 +161,10 @@ class MainActivity : AppCompatActivity() {
         if (d == null) { log("Sélectionne d'abord une clé."); return }
         MaterialAlertDialogBuilder(this)
             .setTitle("Tout sera effacé")
-            .setMessage("Formater cette clé en $selFs ($selTable) ? TOUTES les données seront perdues.")
+            .setMessage(
+                "Formater cette clé en $selFs ($selTable) ? TOUTES les données seront perdues." +
+                    if (selFs == "FAT16") "\n\nFAT16 est limité à 4 Go : sur une clé plus grosse, seuls 4 Go seront utilisés." else ""
+            )
             .setPositiveButton("Formater") { _, _ ->
                 if (usb.hasPermission(d)) startFormat(d) else requestPerm(d)
             }
@@ -188,7 +191,11 @@ class MainActivity : AppCompatActivity() {
                 dev = UsbMassStorage.open(usb, d)
                 log("Capacité : ${dev.blockCount * dev.blockSize / 1000000} Mo (secteurs de ${dev.blockSize} octets)")
                 val p: Progress = { pct, msg -> runOnUiThread { bar.setProgressCompat(pct, true); tvStatus.text = msg } }
-                if (fs == "FAT32") Formatters.formatFat32(dev, label, gpt, p) else Formatters.formatExFat(dev, label, gpt, p)
+                when (fs) {
+                    "FAT32" -> Formatters.formatFat32(dev, label, gpt, p)
+                    "FAT16" -> Formatters.formatFat16(dev, label, gpt, p)
+                    else -> Formatters.formatExFat(dev, label, gpt, p)
+                }
                 log("Formatage $fs (${if (gpt) "GPT" else "MBR"}) terminé. Débranche puis rebranche la clé.")
             } catch (e: Throwable) {
                 log("Erreur : ${e.message}")

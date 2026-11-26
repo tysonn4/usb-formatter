@@ -7,11 +7,15 @@ typealias Progress = (Int, String) -> Unit
 
 object Formatters {
     private const val MB = 1048576
+    /** GUID de type GPT : partition de données Windows (EBD0A0A2-B9E5-4433-87C0-68B6B72699C7) */
+    val BASIC_DATA = intArrayOf(0xA2, 0xA0, 0xD0, 0xEB, 0xE5, 0xB9, 0x33, 0x44, 0x87, 0xC0, 0x68, 0xB6, 0xB7, 0x26, 0x99, 0xC7)
+    /** GUID de type GPT : système de fichiers Linux (0FC63DAF-8483-4772-8E79-3D69D8477DE4) */
+    val LINUX_FS = intArrayOf(0xAF, 0x3D, 0xC6, 0x0F, 0x83, 0x84, 0x72, 0x47, 0x8E, 0x79, 0x3D, 0x69, 0xD8, 0x47, 0x7D, 0xE4)
 
-    private fun le(n: Int): ByteBuffer = ByteBuffer.allocate(n).order(ByteOrder.LITTLE_ENDIAN)
-    private fun startLba(dev: BlockDev) = (MB / dev.blockSize).toLong()
+    internal fun le(n: Int): ByteBuffer = ByteBuffer.allocate(n).order(ByteOrder.LITTLE_ENDIAN)
+    internal fun startLba(dev: BlockDev) = (MB / dev.blockSize).toLong()
 
-    private fun zero(dev: BlockDev, lba: Long, sectors: Long, p: Progress? = null, from: Int = 0, to: Int = 0) {
+    internal fun zero(dev: BlockDev, lba: Long, sectors: Long, p: Progress? = null, from: Int = 0, to: Int = 0) {
         val bs = dev.blockSize
         val chunk = (MB / bs).toLong()
         val z = ByteArray((chunk * bs).toInt())
@@ -25,7 +29,7 @@ object Formatters {
     }
 
     /** Efface les anciennes tables GPT (début et fin du disque). */
-    private fun wipeGpt(dev: BlockDev) {
+    internal fun wipeGpt(dev: BlockDev) {
         val bs = dev.blockSize
         dev.write(1, ByteArray(33 * bs))
         dev.write(dev.blockCount - 34, ByteArray(34 * bs))
@@ -51,7 +55,7 @@ object Formatters {
     }
 
     private fun entriesSectors(dev: BlockDev) = (16384 + dev.blockSize - 1) / dev.blockSize
-    private fun lastUsable(dev: BlockDev) = dev.blockCount - 2 - entriesSectors(dev)
+    internal fun lastUsable(dev: BlockDev) = dev.blockCount - 2 - entriesSectors(dev)
 
     private fun guid(u: java.util.UUID): ByteArray {
         val b = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN)
@@ -61,7 +65,7 @@ object Formatters {
         return b.array()
     }
 
-    private fun writeGpt(dev: BlockDev, start: Long, sectors: Long, label: String) {
+    private fun writeGpt(dev: BlockDev, start: Long, sectors: Long, label: String, typeGuid: IntArray) {
         val bs = dev.blockSize
         val es = entriesSectors(dev)
         val last = dev.blockCount - 1
@@ -70,8 +74,7 @@ object Formatters {
         val entries = ByteArray(es * bs)
         val eb = ByteBuffer.wrap(entries).order(ByteOrder.LITTLE_ENDIAN)
         // Basic data partition : EBD0A0A2-B9E5-4433-87C0-68B6B72699C7
-        intArrayOf(0xA2, 0xA0, 0xD0, 0xEB, 0xE5, 0xB9, 0x33, 0x44, 0x87, 0xC0, 0x68, 0xB6, 0xB7, 0x26, 0x99, 0xC7)
-            .forEachIndexed { i, v -> entries[i] = v.toByte() }
+        typeGuid.forEachIndexed { i, v -> entries[i] = v.toByte() }
         guid(java.util.UUID.randomUUID()).copyInto(entries, 16)
         eb.putLong(32, start); eb.putLong(40, start + sectors - 1)
         val name = (if (label.isEmpty()) "USB" else label).take(30)
@@ -102,9 +105,10 @@ object Formatters {
     }
 
     /** MBR classique, ou GPT (avec MBR de protection). */
-    private fun writeTable(dev: BlockDev, gpt: Boolean, start: Long, sectors: Long, mbrType: Int, label: String) {
+    internal fun writeTable(dev: BlockDev, gpt: Boolean, start: Long, sectors: Long, mbrType: Int, label: String,
+                            gptType: IntArray = BASIC_DATA) {
         if (gpt) {
-            writeGpt(dev, start, sectors, label)
+            writeGpt(dev, start, sectors, label, gptType)
             writeMbr(dev, 1, minOf(dev.blockCount - 1, 0xFFFFFFFFL), 0xEE)
         } else {
             writeMbr(dev, start, sectors, mbrType)
@@ -137,7 +141,7 @@ object Formatters {
         return b.array()
     }
 
-    private fun check(dev: BlockDev, gpt: Boolean) {
+    internal fun check(dev: BlockDev, gpt: Boolean) {
         if (!gpt && dev.blockCount > 0xFFFFFFFFL) throw IllegalStateException("Disque trop grand pour une table MBR (> 2 To), choisis GPT")
         if (dev.blockCount * dev.blockSize < 64L * MB) throw IllegalStateException("Clé trop petite (< 64 Mo)")
     }
@@ -216,6 +220,72 @@ object Formatters {
         p(98, "Table de partition…")
         writeTable(dev, gpt, start, vol, 0x0C, lab)
         p(100, "Terminé : FAT32")
+    }
+
+    fun formatFat16(dev: BlockDev, label: String, gpt: Boolean, p: Progress) {
+        check(dev, gpt)
+        val bs = dev.blockSize
+        val start = startLba(dev)
+        var vol = minOf(if (gpt) lastUsable(dev) - start + 1 else dev.blockCount - start, 0xFFFFFFFFL)
+        val maxSpc = 65536 / bs                       // clusters de 64 Ko maximum
+        val reserved = 1L
+        val nFats = 2L
+        val rootEntries = 512
+        val rootSectors = (rootEntries * 32L + bs - 1) / bs
+        // FAT16 : 65 524 clusters de 64 Ko au maximum (environ 4 Go)
+        val capSectors = 4000L * MB / bs
+        val capped = vol > capSectors
+        if (capped) vol = capSectors
+
+        var spc = 1
+        var fatSz: Long
+        var clusters: Long
+        while (true) {
+            val t1 = vol - reserved - rootSectors
+            val t2 = (bs / 2L) * spc + nFats
+            fatSz = (t1 + t2 - 1) / t2
+            clusters = (vol - reserved - rootSectors - nFats * fatSz) / spc
+            if (clusters <= 65524 || spc >= maxSpc) break
+            spc *= 2
+        }
+        if (clusters > 65524) throw IllegalStateException("Clé trop grande pour FAT16")
+        if (clusters < 4085) throw IllegalStateException("Clé trop petite pour FAT16")
+
+        p(1, "Nettoyage des anciennes tables…")
+        wipeGpt(dev)
+
+        val lab = label.uppercase().filter { it.code in 32..126 && it !in "\"*+,./:;<=>?[\\]|" }.take(11)
+        val lab11 = (if (lab.isEmpty()) "NO NAME" else lab).padEnd(11)
+
+        val b = le(bs); val a = b.array()
+        a[0] = 0xEB.toByte(); a[1] = 0x3C; a[2] = 0x90.toByte()
+        "MSDOS5.0".toByteArray().copyInto(a, 3)
+        b.putShort(11, bs.toShort()); a[13] = spc.toByte(); b.putShort(14, reserved.toShort()); a[16] = nFats.toByte()
+        b.putShort(17, rootEntries.toShort())
+        if (vol < 65536) b.putShort(19, vol.toShort()) else b.putInt(32, vol.toInt())
+        a[21] = 0xF8.toByte(); b.putShort(22, fatSz.toShort()); b.putShort(24, 63); b.putShort(26, 255)
+        b.putInt(28, start.toInt())
+        a[36] = 0x80.toByte(); a[38] = 0x29
+        b.putInt(39, java.util.Random().nextInt())
+        lab11.toByteArray().copyInto(a, 43)
+        "FAT16   ".toByteArray().copyInto(a, 54)
+        a[510] = 0x55; a[511] = 0xAA.toByte()
+        dev.write(start, a)
+
+        zero(dev, start + reserved, nFats * fatSz, p, 5, 90)
+        val fh = le(bs)
+        fh.putShort(0, 0xFFF8.toShort()); fh.putShort(2, 0xFFFF.toShort())
+        for (i in 0 until nFats) dev.write(start + reserved + i * fatSz, fh.array())
+
+        p(95, "Dossier racine…")
+        val rootLba = start + reserved + nFats * fatSz
+        val root = ByteArray((rootSectors * bs).toInt())
+        if (lab.isNotEmpty()) { lab11.toByteArray().copyInto(root, 0); root[11] = 0x08 }
+        dev.write(rootLba, root)
+
+        p(98, "Table de partition…")
+        writeTable(dev, gpt, start, vol, 0x0E, lab)
+        p(100, if (capped) "Terminé : FAT16 (partition limitée à 4 Go)" else "Terminé : FAT16")
     }
 
     fun formatExFat(dev: BlockDev, label: String, gpt: Boolean, p: Progress) {
