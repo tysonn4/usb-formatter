@@ -14,7 +14,14 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.13
-      - run: gradle assembleDebug --no-daemon
+      - name: Build (avec nouvelles tentatives)
+        run: |
+          for i in 1 2 3 4; do
+            gradle assembleDebug --no-daemon && exit 0
+            echo "Tentative $i échouée, nouvel essai dans 60 s"
+            sleep 60
+          done
+          exit 1
       - uses: actions/upload-artifact@v4
         with:
           name: UsbFormatter-apk
