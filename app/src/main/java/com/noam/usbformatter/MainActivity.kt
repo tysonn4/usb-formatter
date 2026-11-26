@@ -78,7 +78,7 @@ class MainActivity : AppCompatActivity() {
             setTextAppearance(M.style.TextAppearance_Material3_HeadlineLarge)
         })
         root.addView(TextView(this).apply {
-            text = "Formate une clé USB en FAT32, FAT16 ou exFAT (MBR ou GPT), sans root."
+            text = "Formate une clé USB en FAT32, FAT16, exFAT, ext4 ou NTFS (MBR ou GPT), sans root."
             setTextAppearance(M.style.TextAppearance_Material3_BodyMedium)
         }, lp(4))
 
@@ -93,7 +93,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(devLayout, lp(16))
 
         val (fsLayout, fsField) = dropdown("Format")
-        val fsList = listOf("FAT32", "FAT16", "exFAT")
+        val fsList = listOf("FAT32", "FAT16", "exFAT", "ext4", "NTFS")
         fsField.setAdapter(ArrayAdapter(this, android.R.layout.simple_list_item_1, fsList))
         fsField.setText(fsList[0], false)
         fsField.setOnItemClickListener { _, _, pos, _ -> selFs = fsList[pos] }
@@ -163,7 +163,12 @@ class MainActivity : AppCompatActivity() {
             .setTitle("Tout sera effacé")
             .setMessage(
                 "Formater cette clé en $selFs ($selTable) ? TOUTES les données seront perdues." +
-                    if (selFs == "FAT16") "\n\nFAT16 est limité à 4 Go : sur une clé plus grosse, seuls 4 Go seront utilisés." else ""
+                    when (selFs) {
+                        "FAT16" -> "\n\nFAT16 est limité à 4 Go : sur une clé plus grosse, seuls 4 Go seront utilisés."
+                        "ext4" -> "\n\next4 est le format Linux : Android ne sait pas l'ouvrir, mais un PC Linux oui."
+                        "NTFS" -> "\n\nNTFS : Windows et les PC le lisent, mais Android ne sait pas l'ouvrir. Clés à secteurs de 512 octets seulement."
+                        else -> ""
+                    }
             )
             .setPositiveButton("Formater") { _, _ ->
                 if (usb.hasPermission(d)) startFormat(d) else requestPerm(d)
@@ -194,6 +199,8 @@ class MainActivity : AppCompatActivity() {
                 when (fs) {
                     "FAT32" -> Formatters.formatFat32(dev, label, gpt, p)
                     "FAT16" -> Formatters.formatFat16(dev, label, gpt, p)
+                    "ext4" -> Ext4.format(dev, label, gpt, p)
+                    "NTFS" -> Ntfs.format(dev, label, gpt, p)
                     else -> Formatters.formatExFat(dev, label, gpt, p)
                 }
                 log("Formatage $fs (${if (gpt) "GPT" else "MBR"}) terminé. Débranche puis rebranche la clé.")
