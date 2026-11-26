@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Material You : couleurs dynamiques (Android 12+), clair/sombre automatique -->
-    <style name="AppTheme" parent="Theme.Material3.DynamicColors.DayNight.NoActionBar" />
+    <!-- Material 3 Expressive + couleurs dynamiques (Material You), clair/sombre automatique -->
+    <style name="AppTheme" parent="Theme.Material3Expressive.DynamicColors.DayNight.NoActionBar">
+        <!-- Barre de progression ondulée (style expressif) -->
+        <item name="linearProgressIndicatorStyle">@style/Widget.Material3Expressive.LinearProgressIndicator.Wavy</item>
+    </style>
 </resources>
