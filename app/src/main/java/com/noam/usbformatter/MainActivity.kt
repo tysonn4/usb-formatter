@@ -10,6 +10,7 @@ import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Bundle
 import android.text.InputType
+import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.ArrayAdapter
@@ -41,6 +42,10 @@ class MainActivity : AppCompatActivity() {
     private var selFs = "FAT32"
     private var selTable = "MBR"
     private var busy = false
+    @Volatile private var cancelTest = false
+    private var pending: (UsbDevice) -> Unit = {}
+    private lateinit var btnTest: MaterialButton
+    private lateinit var btnStop: MaterialButton
 
     private val receiver = object : BroadcastReceiver() {
         @Suppress("DEPRECATION")
@@ -48,7 +53,7 @@ class MainActivity : AppCompatActivity() {
             val dev: UsbDevice? = if (Build.VERSION.SDK_INT >= 33)
                 i.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
             else i.getParcelableExtra(UsbManager.EXTRA_DEVICE)
-            if (i.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false) && dev != null) startFormat(dev)
+            if (i.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false) && dev != null) pending(dev)
             else log("Permission USB refusée.")
         }
     }
@@ -121,6 +126,18 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(btnFormat, lp(24))
 
+        btnTest = MaterialButton(this, null, M.attr.materialButtonOutlinedStyle).apply {
+            text = "Tester la capacité (fausse clé ?)"
+            setOnClickListener { chooseTest() }
+        }
+        root.addView(btnTest, lp(8))
+        btnStop = MaterialButton(this, null, M.attr.materialButtonOutlinedStyle).apply {
+            text = "Arrêter le test"
+            visibility = View.GONE
+            setOnClickListener { cancelTest = true }
+        }
+        root.addView(btnStop, lp(8))
+
         bar = LinearProgressIndicator(this).apply { max = 100 }
         root.addView(bar, lp(24))
         tvStatus = TextView(this).apply { setTextAppearance(M.style.TextAppearance_Material3_LabelLarge) }
@@ -171,6 +188,7 @@ class MainActivity : AppCompatActivity() {
                     }
             )
             .setPositiveButton("Formater") { _, _ ->
+                pending = { startFormat(it) }
                 if (usb.hasPermission(d)) startFormat(d) else requestPerm(d)
             }
             .setNegativeButton("Annuler", null)
@@ -190,6 +208,7 @@ class MainActivity : AppCompatActivity() {
         val gpt = selTable == "GPT"
         val label = etLabel.text.toString()
         btnFormat.isEnabled = false
+        btnTest.isEnabled = false
         Thread {
             var dev: UsbMassStorage? = null
             try {
@@ -208,7 +227,76 @@ class MainActivity : AppCompatActivity() {
                 log("Erreur : ${e.message}")
             } finally {
                 dev?.close()
-                runOnUiThread { btnFormat.isEnabled = true; busy = false }
+                runOnUiThread { btnFormat.isEnabled = true; btnTest.isEnabled = true; busy = false }
+            }
+        }.start()
+    }
+
+    private fun chooseTest() {
+        if (busy) return
+        val d = devices.getOrNull(selDev)
+        if (d == null) { log("Sélectionne d'abord une clé."); return }
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Détecter une fausse capacité")
+            .setItems(arrayOf("Test rapide (quelques minutes, probable)", "Test complet (long mais fiable)")) { _, which ->
+                confirmTest(d, which == 1)
+            }
+            .setNegativeButton("Annuler", null)
+            .show()
+    }
+
+    private fun confirmTest(d: UsbDevice, full: Boolean) {
+        val detail = if (full)
+            "Le test complet écrit puis relit toute la capacité : compte plusieurs minutes, voire plusieurs heures sur une grosse clé. Garde l'appli ouverte. Tu peux l'arrêter à tout moment."
+        else
+            "Le test rapide dure quelques minutes mais peut rater certaines fausses clés."
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Tout sera effacé")
+            .setMessage("Ce test écrit sur toute la clé et efface TOUTES les données.\n\n" + detail)
+            .setPositiveButton("Lancer") { _, _ ->
+                pending = { startTest(it, full) }
+                if (usb.hasPermission(d)) startTest(d, full) else requestPerm(d)
+            }
+            .setNegativeButton("Annuler", null)
+            .show()
+    }
+
+    private fun startTest(d: UsbDevice, full: Boolean) {
+        if (busy) return
+        busy = true
+        cancelTest = false
+        btnFormat.isEnabled = false
+        btnTest.isEnabled = false
+        btnStop.visibility = View.VISIBLE
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        Thread {
+            var dev: UsbMassStorage? = null
+            var res: CapacityTest.Result? = null
+            try {
+                dev = UsbMassStorage.open(usb, d)
+                log("Test de capacité (${if (full) "complet" else "rapide"}) : ${dev.blockCount * dev.blockSize / 1000000} Mo annoncés…")
+                val p: Progress = { pct, msg -> runOnUiThread { bar.setProgressCompat(pct, true); tvStatus.text = msg } }
+                res = if (full) CapacityTest.full(dev, p) { cancelTest } else CapacityTest.quick(dev, p) { cancelTest }
+            } catch (e: Throwable) {
+                log("Erreur : ${e.message}")
+            } finally {
+                dev?.close()
+                runOnUiThread {
+                    btnFormat.isEnabled = true; btnTest.isEnabled = true
+                    btnStop.visibility = View.GONE
+                    window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    busy = false
+                }
+            }
+            res?.let { r ->
+                log(r.text)
+                runOnUiThread {
+                    MaterialAlertDialogBuilder(this)
+                        .setTitle(if (r.ok) "Clé OK" else "Résultat du test")
+                        .setMessage(r.text)
+                        .setPositiveButton("OK", null)
+                        .show()
+                }
             }
         }.start()
     }
